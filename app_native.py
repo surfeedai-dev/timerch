@@ -77,6 +77,34 @@ class DraggableView(AppKit.NSView):
     acceptsFirstMouse_ = objc.selector(acceptsFirstMouse_, signature=b"B@:@")
 
 
+# ── 일지 데이터소스 ──────────────────────────────────────────────────────────
+
+class LogDataSource(NSObject):
+
+    def initWithEntries_(self, entries):
+        self = objc.super(LogDataSource, self).init()
+        if self is None:
+            return None
+        self.entries = entries
+        return self
+
+    def numberOfRowsInTableView_(self, tv):
+        return len(self.entries)
+    numberOfRowsInTableView_ = objc.selector(
+        numberOfRowsInTableView_, signature=b"l@:@")
+
+    def tableView_objectValueForTableColumn_row_(self, tv, col, row):
+        e = self.entries[row]
+        ident = str(col.identifier())
+        if ident == "time":
+            return e.get("time", "")
+        if ident == "text":
+            return e.get("text", "")
+        return ""
+    tableView_objectValueForTableColumn_row_ = objc.selector(
+        tableView_objectValueForTableColumn_row_, signature=b"@@:@@l")
+
+
 # ── 일지 창 ──────────────────────────────────────────────────────────────────
 
 class LogController(NSObject):
@@ -88,7 +116,8 @@ class LogController(NSObject):
         self._overlay = overlay
         self._panel = None
         self._input = None
-        self._text_view = None
+        self._table = None
+        self._data_source = None
         return self
 
     @objc.python_method
@@ -101,7 +130,7 @@ class LogController(NSObject):
 
     @objc.python_method
     def _build(self):
-        w, h = 300, 420
+        w, h = 320, 420
         screen = AppKit.NSScreen.mainScreen().frame()
         panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect((screen.size.width - w) / 2,
@@ -121,7 +150,7 @@ class LogController(NSObject):
         c.addSubview_(self._input)
 
         add_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(w - 82, h - 52, 70, 32))
+            NSMakeRect(w - 86, h - 52, 74, 32))
         add_btn.setTitle_("기록")
         add_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         add_btn.setKeyEquivalent_("\r")
@@ -133,21 +162,51 @@ class LogController(NSObject):
         line.setBoxType_(AppKit.NSBoxSeparator)
         c.addSubview_(line)
 
-        # 기록 목록
-        self._text_view = AppKit.NSTextView.alloc().initWithFrame_(
-            NSMakeRect(0, 0, w, h - 70))
-        self._text_view.setEditable_(False)
-        self._text_view.setSelectable_(True)
-        self._text_view.setFont_(AppKit.NSFont.systemFontOfSize_(13))
-        self._text_view.setTextContainerInset_(AppKit.NSMakeSize(8, 8))
-        self._text_view.setAutomaticLinkDetectionEnabled_(False)
+        # 기록 목록 (테이블)
+        self._data_source = LogDataSource.alloc().initWithEntries_([])
+        self._table = AppKit.NSTableView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, w, 1))
+
+        time_col = AppKit.NSTableColumn.alloc().initWithIdentifier_("time")
+        time_col.setTitle_("시간")
+        time_col.setWidth_(52)
+        time_col.setEditable_(False)
+        self._table.addTableColumn_(time_col)
+
+        text_col = AppKit.NSTableColumn.alloc().initWithIdentifier_("text")
+        text_col.setTitle_("내용")
+        text_col.setWidth_(w - 52 - 16)
+        text_col.setEditable_(False)
+        self._table.addTableColumn_(text_col)
+
+        self._table.setDataSource_(self._data_source)
+        self._table.setRowHeight_(24)
+        self._table.setUsesAlternatingRowBackgroundColors_(True)
+        self._table.setAllowsEmptySelection_(True)
 
         scroll = AppKit.NSScrollView.alloc().initWithFrame_(
-            NSMakeRect(0, 0, w, h - 70))
-        scroll.setDocumentView_(self._text_view)
+            NSMakeRect(0, 40, w, h - 70 - 40))
+        scroll.setDocumentView_(self._table)
         scroll.setHasVerticalScroller_(True)
         scroll.setBorderType_(AppKit.NSNoBorder)
         c.addSubview_(scroll)
+
+        # 삭제 버튼
+        del_btn = AppKit.NSButton.alloc().initWithFrame_(
+            NSMakeRect(12, 8, 90, 28))
+        del_btn.setTitle_("− 선택 삭제")
+        del_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
+        del_btn.setTarget_(self)
+        del_btn.setAction_("deleteEntry:")
+        c.addSubview_(del_btn)
+
+        del_all_btn = AppKit.NSButton.alloc().initWithFrame_(
+            NSMakeRect(110, 8, 90, 28))
+        del_all_btn.setTitle_("전체 삭제")
+        del_all_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
+        del_all_btn.setTarget_(self)
+        del_all_btn.setAction_("deleteAll:")
+        c.addSubview_(del_all_btn)
 
         self._panel = panel
 
@@ -155,12 +214,8 @@ class LogController(NSObject):
     def _reload(self):
         today = str(date.today())
         log = cfg.load_log()
-        entries = log.get(today, [])
-        if entries:
-            text = "\n".join(f"[{e['time']}]  {e['text']}" for e in reversed(entries))
-        else:
-            text = "아직 기록이 없어요. 오늘 뭘 했는지 남겨봐요! 😊"
-        self._text_view.setString_(text)
+        self._data_source.entries = log.get(today, [])
+        self._table.reloadData()
 
     def addEntry_(self, sender):
         text = str(self._input.stringValue()).strip()
@@ -174,6 +229,33 @@ class LogController(NSObject):
         self._input.setStringValue_("")
         self._reload()
     addEntry_ = objc.selector(addEntry_, signature=b"v@:@")
+
+    def deleteEntry_(self, sender):
+        row = self._table.selectedRow()
+        if row < 0:
+            return
+        today = str(date.today())
+        log = cfg.load_log()
+        entries = log.get(today, [])
+        if 0 <= row < len(entries):
+            del entries[row]
+            log[today] = entries
+            cfg.save_log(log)
+            self._reload()
+    deleteEntry_ = objc.selector(deleteEntry_, signature=b"v@:@")
+
+    def deleteAll_(self, sender):
+        alert = AppKit.NSAlert.alloc().init()
+        alert.setMessageText_("오늘 기록을 전체 삭제할까요?")
+        alert.addButtonWithTitle_("삭제")
+        alert.addButtonWithTitle_("취소")
+        if alert.runModal() == AppKit.NSAlertFirstButtonReturn:
+            today = str(date.today())
+            log = cfg.load_log()
+            log[today] = []
+            cfg.save_log(log)
+            self._reload()
+    deleteAll_ = objc.selector(deleteAll_, signature=b"v@:@")
 
 
 # ── 설정 창 ──────────────────────────────────────────────────────────────────
