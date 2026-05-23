@@ -1,11 +1,9 @@
 """
-타임캐릭터 - 순수 AppKit NSPanel 기반
+타임캐릭터 - 시간 & 수익 추적 데스크탑 펫
 """
 import sys
-import queue
 import signal
 import shutil
-import copy
 from pathlib import Path
 
 import objc
@@ -15,7 +13,6 @@ from Quartz import CGWindowLevelForKey, kCGMaximumWindowLevelKey
 
 import config as cfg
 from tracker import TimeTracker
-from browser_watcher import BrowserWatcher
 
 MAX_LEVEL = CGWindowLevelForKey(kCGMaximumWindowLevelKey)
 
@@ -41,15 +38,10 @@ class DraggableView(AppKit.NSView):
             return
         loc = event.locationInWindow()
         frame = self.window().frame()
-        new_x = frame.origin.x + loc.x - self._drag_start.x
-        new_y = frame.origin.y + loc.y - self._drag_start.y
-        self.window().setFrameOrigin_(NSMakePoint(new_x, new_y))
-        bubble = self._ctrl._bubble_panel
-        if bubble:
-            bubble.setFrameOrigin_(NSMakePoint(
-                new_x - 15,
-                new_y + frame.size.height + 8,
-            ))
+        self.window().setFrameOrigin_(NSMakePoint(
+            frame.origin.x + loc.x - self._drag_start.x,
+            frame.origin.y + loc.y - self._drag_start.y,
+        ))
     mouseDragged_ = objc.selector(mouseDragged_, signature=b"v@:@")
 
     def mouseUp_(self, event):
@@ -75,160 +67,6 @@ class DraggableView(AppKit.NSView):
     acceptsFirstMouse_ = objc.selector(acceptsFirstMouse_, signature=b"B@:@")
 
 
-# ── 사이트 테이블 데이터소스 ─────────────────────────────────────────────────
-
-class SiteDataSource(NSObject):
-
-    def initWithSites_(self, sites):
-        self = objc.super(SiteDataSource, self).init()
-        if self is None:
-            return None
-        self.sites = sites
-        return self
-
-    def numberOfRowsInTableView_(self, tv):
-        return len(self.sites)
-    numberOfRowsInTableView_ = objc.selector(
-        numberOfRowsInTableView_, signature=b"l@:@")
-
-    def tableView_objectValueForTableColumn_row_(self, tv, col, row):
-        s = self.sites[row]
-        ident = str(col.identifier())
-        if ident == "domain":
-            return s.get("domain", "")
-        if ident == "message":
-            return s.get("message", "")
-        if ident == "delay":
-            return str(s.get("delay_minutes", 20))
-        return ""
-    tableView_objectValueForTableColumn_row_ = objc.selector(
-        tableView_objectValueForTableColumn_row_, signature=b"@@:@@l")
-
-
-# ── 사이트 추가 다이얼로그 ───────────────────────────────────────────────────
-
-class AddSiteDialog(NSObject):
-
-    def initWithParent_callback_(self, parent_panel, callback):
-        self = objc.super(AddSiteDialog, self).init()
-        if self is None:
-            return None
-        self._parent = parent_panel
-        self._callback = callback
-        self._panel = None
-        self._domain_field = None
-        self._message_field = None
-        self._delay_field = None
-        self._build()
-        return self
-
-    @objc.python_method
-    def _build(self):
-        w, h = 360, 220
-        screen = AppKit.NSScreen.mainScreen().frame()
-        panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-            NSMakeRect(
-                (screen.size.width - w) / 2,
-                (screen.size.height - h) / 2,
-                w, h
-            ),
-            AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskClosable,
-            AppKit.NSBackingStoreBuffered, False,
-        )
-        self._title_label = "사이트 추가"
-        panel.setTitle_(self._title_label)
-        panel.setLevel_(MAX_LEVEL)
-        c = panel.contentView()
-
-        self._add_label(c, "사이트 도메인", NSMakeRect(20, 168, 120, 22))
-        self._domain_field = AppKit.NSTextField.alloc().initWithFrame_(
-            NSMakeRect(150, 165, 185, 26))
-        self._domain_field.setPlaceholderString_("예: naver.com")
-        c.addSubview_(self._domain_field)
-
-        self._add_label(c, "알림 메시지", NSMakeRect(20, 128, 120, 22))
-        self._message_field = AppKit.NSTextField.alloc().initWithFrame_(
-            NSMakeRect(150, 125, 185, 26))
-        self._message_field.setPlaceholderString_("예: 네이버 보고 있어? 😅")
-        c.addSubview_(self._message_field)
-
-        self._add_label(c, "알림 시간 (분)", NSMakeRect(20, 88, 120, 22))
-        self._delay_field = AppKit.NSTextField.alloc().initWithFrame_(
-            NSMakeRect(150, 85, 185, 26))
-        self._delay_field.setStringValue_("20")
-        c.addSubview_(self._delay_field)
-
-        cancel_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(80, 20, 90, 32))
-        cancel_btn.setTitle_("취소")
-        cancel_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
-        cancel_btn.setTarget_(self)
-        cancel_btn.setAction_("cancel:")
-        c.addSubview_(cancel_btn)
-
-        self._ok_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(185, 20, 90, 32))
-        self._ok_btn.setTitle_("추가")
-        self._ok_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
-        self._ok_btn.setKeyEquivalent_("\r")
-        self._ok_btn.setTarget_(self)
-        self._ok_btn.setAction_("confirm:")
-        c.addSubview_(self._ok_btn)
-
-        self._panel = panel
-
-    @objc.python_method
-    def _add_label(self, parent, text, frame):
-        label = AppKit.NSTextField.alloc().initWithFrame_(frame)
-        label.setStringValue_(text)
-        label.setBezeled_(False)
-        label.setDrawsBackground_(False)
-        label.setEditable_(False)
-        label.setAlignment_(AppKit.NSTextAlignmentRight)
-        parent.addSubview_(label)
-
-    @objc.python_method
-    def show(self, site=None):
-        if site:
-            self._panel.setTitle_("사이트 수정")
-            self._ok_btn.setTitle_("수정")
-            self._domain_field.setStringValue_(site.get("domain", ""))
-            self._domain_field.setEditable_(False)
-            self._message_field.setStringValue_(site.get("message", ""))
-            self._delay_field.setStringValue_(str(site.get("delay_minutes", 20)))
-        else:
-            self._panel.setTitle_("사이트 추가")
-            self._ok_btn.setTitle_("추가")
-            self._domain_field.setStringValue_("")
-            self._domain_field.setEditable_(True)
-            self._message_field.setStringValue_("")
-            self._delay_field.setStringValue_("20")
-        AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        self._panel.makeKeyAndOrderFront_(None)
-
-    def confirm_(self, sender):
-        domain = str(self._domain_field.stringValue()).strip()
-        message = str(self._message_field.stringValue()).strip()
-        try:
-            delay = int(str(self._delay_field.stringValue()))
-        except ValueError:
-            delay = 20
-        if domain:
-            if not message:
-                message = f"{domain} 열려 있어! 😅\n슬슬 다른 거 할까?"
-            self._callback({
-                "domain": domain,
-                "message": message,
-                "delay_minutes": delay,
-            })
-        self._panel.orderOut_(None)
-    confirm_ = objc.selector(confirm_, signature=b"v@:@")
-
-    def cancel_(self, sender):
-        self._panel.orderOut_(None)
-    cancel_ = objc.selector(cancel_, signature=b"v@:@")
-
-
 # ── 설정 창 ──────────────────────────────────────────────────────────────────
 
 class SettingsController(NSObject):
@@ -240,14 +78,8 @@ class SettingsController(NSObject):
         self._overlay = overlay
         self._panel = None
         self._img_preview = None
-        self._bubble_bg_preview = None
         self._rate_field = None
-        self._bubble_sec_field = None
-        self._table = None
-        self._data_source = None
         self._pending_char = None
-        self._pending_bubble_bg = None
-        self._add_dialog = None
         return self
 
     @objc.python_method
@@ -260,7 +92,7 @@ class SettingsController(NSObject):
 
     @objc.python_method
     def _build(self):
-        w, h = 420, 600
+        w, h = 320, 300
         screen = AppKit.NSScreen.mainScreen().frame()
         panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect((screen.size.width - w) / 2,
@@ -272,9 +104,9 @@ class SettingsController(NSObject):
         panel.setLevel_(MAX_LEVEL)
         c = panel.contentView()
 
-        # ── 캐릭터 섹션 ──
+        # 캐릭터 미리보기
         self._img_preview = AppKit.NSImageView.alloc().initWithFrame_(
-            NSMakeRect(w/2 - 60, 490, 120, 90))
+            NSMakeRect(w/2 - 55, 170, 110, 90))
         self._img_preview.setImageScaling_(
             AppKit.NSImageScaleProportionallyUpOrDown)
         self._img_preview.setWantsLayer_(True)
@@ -283,132 +115,34 @@ class SettingsController(NSObject):
         c.addSubview_(self._img_preview)
 
         char_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(w/2 - 60, 458, 120, 28))
+            NSMakeRect(w/2 - 55, 136, 110, 28))
         char_btn.setTitle_("캐릭터 변경")
         char_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         char_btn.setTarget_(self)
         char_btn.setAction_("changeCharacter:")
         c.addSubview_(char_btn)
 
-        # ── 시급 ──
-        self._add_label(c, "시급 (원)", NSMakeRect(20, 421, 110, 22))
+        line = AppKit.NSBox.alloc().initWithFrame_(NSMakeRect(15, 118, w-30, 1))
+        line.setBoxType_(AppKit.NSBoxSeparator)
+        c.addSubview_(line)
+
+        # 시급
+        rate_label = AppKit.NSTextField.alloc().initWithFrame_(
+            NSMakeRect(20, 84, 100, 22))
+        rate_label.setStringValue_("시급 (원)")
+        rate_label.setBezeled_(False)
+        rate_label.setDrawsBackground_(False)
+        rate_label.setEditable_(False)
+        rate_label.setAlignment_(AppKit.NSTextAlignmentRight)
+        c.addSubview_(rate_label)
+
         self._rate_field = AppKit.NSTextField.alloc().initWithFrame_(
-            NSMakeRect(140, 418, 160, 26))
+            NSMakeRect(130, 81, 150, 26))
         c.addSubview_(self._rate_field)
 
-        # ── 말풍선 시간 ──
-        self._add_label(c, "말풍선 시간 (초)", NSMakeRect(20, 384, 110, 22))
-        self._bubble_sec_field = AppKit.NSTextField.alloc().initWithFrame_(
-            NSMakeRect(140, 381, 80, 26))
-        c.addSubview_(self._bubble_sec_field)
-
-        # ── 말풍선 배경 이미지 ──
-        self._add_label(c, "말풍선 배경", NSMakeRect(20, 347, 110, 22))
-        self._bubble_bg_preview = AppKit.NSImageView.alloc().initWithFrame_(
-            NSMakeRect(140, 342, 48, 30))
-        self._bubble_bg_preview.setImageScaling_(
-            AppKit.NSImageScaleProportionallyUpOrDown)
-        self._bubble_bg_preview.setWantsLayer_(True)
-        self._bubble_bg_preview.layer().setCornerRadius_(4.0)
-        self._bubble_bg_preview.layer().setMasksToBounds_(True)
-        c.addSubview_(self._bubble_bg_preview)
-
-        bg_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(196, 342, 90, 28))
-        bg_btn.setTitle_("이미지 선택")
-        bg_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
-        bg_btn.setTarget_(self)
-        bg_btn.setAction_("changeBubbleBg:")
-        c.addSubview_(bg_btn)
-
-        bg_remove_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(292, 342, 50, 28))
-        bg_remove_btn.setTitle_("제거")
-        bg_remove_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
-        bg_remove_btn.setTarget_(self)
-        bg_remove_btn.setAction_("removeBubbleBg:")
-        c.addSubview_(bg_remove_btn)
-
-        line1 = AppKit.NSBox.alloc().initWithFrame_(NSMakeRect(15, 322, w-30, 1))
-        line1.setBoxType_(AppKit.NSBoxSeparator)
-        c.addSubview_(line1)
-
-        # ── 사이트 섹션 레이블 ──
-        section = AppKit.NSTextField.alloc().initWithFrame_(
-            NSMakeRect(15, 298, 200, 20))
-        section.setStringValue_("모니터링 사이트")
-        section.setBezeled_(False)
-        section.setDrawsBackground_(False)
-        section.setEditable_(False)
-        section.setFont_(AppKit.NSFont.boldSystemFontOfSize_(12))
-        c.addSubview_(section)
-
-        # ── 테이블 ──
-        self._data_source = SiteDataSource.alloc().initWithSites_([])
-        self._table = AppKit.NSTableView.alloc().initWithFrame_(
-            NSMakeRect(0, 0, w - 30, 280))
-
-        for ident, title, width in [
-            ("domain",  "사이트",    130),
-            ("message", "메시지",    190),
-            ("delay",   "분",        50),
-        ]:
-            col = AppKit.NSTableColumn.alloc().initWithIdentifier_(ident)
-            col.setTitle_(title)
-            col.setWidth_(width)
-            col.setEditable_(False)
-            self._table.addTableColumn_(col)
-
-        self._table.setDataSource_(self._data_source)
-        self._table.setDelegate_(None)
-        self._table.setRowHeight_(22)
-        self._table.setUsesAlternatingRowBackgroundColors_(True)
-
-        scroll = AppKit.NSScrollView.alloc().initWithFrame_(
-            NSMakeRect(15, 96, w - 30, 196))
-        scroll.setDocumentView_(self._table)
-        scroll.setHasVerticalScroller_(True)
-        scroll.setBorderType_(AppKit.NSBezelBorder)
-        c.addSubview_(scroll)
-
-        # ── 1행: 추가 / 삭제 / 수정 ──
-        btn_y1 = 62
-        add_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(15, btn_y1, 90, 28))
-        add_btn.setTitle_("+ 추가")
-        add_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
-        add_btn.setTarget_(self)
-        add_btn.setAction_("addSite:")
-        c.addSubview_(add_btn)
-
-        del_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(113, btn_y1, 90, 28))
-        del_btn.setTitle_("− 삭제")
-        del_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
-        del_btn.setTarget_(self)
-        del_btn.setAction_("removeSite:")
-        c.addSubview_(del_btn)
-
-        edit_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(211, btn_y1, 90, 28))
-        edit_btn.setTitle_("✏ 수정")
-        edit_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
-        edit_btn.setTarget_(self)
-        edit_btn.setAction_("editSite:")
-        c.addSubview_(edit_btn)
-
-        # ── 2행: 말풍선 테스트 / 저장 ──
-        btn_y2 = 24
-        test_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(15, btn_y2, 120, 28))
-        test_btn.setTitle_("말풍선 테스트")
-        test_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
-        test_btn.setTarget_(self)
-        test_btn.setAction_("testBubble:")
-        c.addSubview_(test_btn)
-
+        # 저장 버튼
         save_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(w - 115, btn_y2, 100, 28))
+            NSMakeRect(w - 115, 20, 100, 32))
         save_btn.setTitle_("저장")
         save_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         save_btn.setKeyEquivalent_("\r")
@@ -417,16 +151,6 @@ class SettingsController(NSObject):
         c.addSubview_(save_btn)
 
         self._panel = panel
-
-    @objc.python_method
-    def _add_label(self, parent, text, frame):
-        label = AppKit.NSTextField.alloc().initWithFrame_(frame)
-        label.setStringValue_(text)
-        label.setBezeled_(False)
-        label.setDrawsBackground_(False)
-        label.setEditable_(False)
-        label.setAlignment_(AppKit.NSTextAlignmentRight)
-        parent.addSubview_(label)
 
     @objc.python_method
     def _refresh(self):
@@ -439,14 +163,6 @@ class SettingsController(NSObject):
         if image:
             self._img_preview.setImage_(image)
         self._rate_field.setStringValue_(str(c.get("hourly_rate", 10320)))
-        self._bubble_sec_field.setStringValue_(str(c.get("bubble_seconds", 8)))
-        bg_path = c.get("bubble_bg_path", "")
-        bg_img = AppKit.NSImage.alloc().initWithContentsOfFile_(bg_path) if bg_path else None
-        self._bubble_bg_preview.setImage_(bg_img)
-        self._pending_bubble_bg = None
-        self._data_source.sites = copy.deepcopy(
-            c.get("watch_sites", []))
-        self._table.reloadData()
         self._pending_char = None
 
     def changeCharacter_(self, sender):
@@ -458,61 +174,9 @@ class SettingsController(NSObject):
             src = p.URLs()[0].path()
             shutil.copy(src, str(cfg.CHAR_FILE))
             self._pending_char = str(cfg.CHAR_FILE)
-            img = AppKit.NSImage.alloc().initWithContentsOfFile_(
-                self._pending_char)
+            img = AppKit.NSImage.alloc().initWithContentsOfFile_(self._pending_char)
             self._img_preview.setImage_(img)
     changeCharacter_ = objc.selector(changeCharacter_, signature=b"v@:@")
-
-    def changeBubbleBg_(self, sender):
-        p = AppKit.NSOpenPanel.openPanel()
-        p.setAllowedFileTypes_(["png", "jpg", "jpeg"])
-        p.setCanChooseFiles_(True)
-        p.setCanChooseDirectories_(False)
-        if p.runModal() == AppKit.NSModalResponseOK:
-            src = p.URLs()[0].path()
-            shutil.copy(src, str(cfg.BUBBLE_BG_FILE))
-            self._pending_bubble_bg = str(cfg.BUBBLE_BG_FILE)
-            img = AppKit.NSImage.alloc().initWithContentsOfFile_(self._pending_bubble_bg)
-            self._bubble_bg_preview.setImage_(img)
-    changeBubbleBg_ = objc.selector(changeBubbleBg_, signature=b"v@:@")
-
-    def removeBubbleBg_(self, sender):
-        self._pending_bubble_bg = ""
-        self._bubble_bg_preview.setImage_(None)
-    removeBubbleBg_ = objc.selector(removeBubbleBg_, signature=b"v@:@")
-
-    def addSite_(self, sender):
-        def on_add(site):
-            self._data_source.sites.append(site)
-            self._table.reloadData()
-        self._add_dialog = AddSiteDialog.alloc().initWithParent_callback_(
-            self._panel, on_add)
-        self._add_dialog.show()
-    addSite_ = objc.selector(addSite_, signature=b"v@:@")
-
-    def editSite_(self, sender):
-        row = self._table.selectedRow()
-        if row < 0 or row >= len(self._data_source.sites):
-            return
-        original = self._data_source.sites[row]
-        def on_edit(site):
-            self._data_source.sites[row] = site
-            self._table.reloadData()
-        self._add_dialog = AddSiteDialog.alloc().initWithParent_callback_(
-            self._panel, on_edit)
-        self._add_dialog.show(site=original)
-    editSite_ = objc.selector(editSite_, signature=b"v@:@")
-
-    def removeSite_(self, sender):
-        row = self._table.selectedRow()
-        if 0 <= row < len(self._data_source.sites):
-            del self._data_source.sites[row]
-            self._table.reloadData()
-    removeSite_ = objc.selector(removeSite_, signature=b"v@:@")
-
-    def testBubble_(self, sender):
-        self._overlay._show_bubble("👋 말풍선 테스트!\n잘 보이나요? 😄")
-    testBubble_ = objc.selector(testBubble_, signature=b"v@:@")
 
     def saveSettings_(self, sender):
         c = self._overlay._config.copy()
@@ -521,17 +185,9 @@ class SettingsController(NSObject):
             self._overlay._tracker.hourly_rate = c["hourly_rate"]
         except ValueError:
             pass
-        try:
-            c["bubble_seconds"] = max(1, int(str(self._bubble_sec_field.stringValue())))
-        except ValueError:
-            pass
         if self._pending_char:
             c["character_path"] = self._pending_char
             self._overlay._reload_character(self._pending_char)
-        if self._pending_bubble_bg is not None:
-            c["bubble_bg_path"] = self._pending_bubble_bg
-        c["watch_sites"] = copy.deepcopy(self._data_source.sites)
-        self._overlay._watcher.update_sites(c["watch_sites"])
         cfg.save(c)
         self._overlay._config = c
         self._panel.orderOut_(None)
@@ -544,14 +200,11 @@ class OverlayController(NSObject):
 
     @objc.python_method
     @classmethod
-    def create(cls, tracker, msg_queue, config, watcher):
+    def create(cls, tracker, config):
         ctrl = cls.alloc().init()
         ctrl._tracker = tracker
-        ctrl._msg_queue = msg_queue
         ctrl._config = config
-        ctrl._watcher = watcher
         ctrl._panel = None
-        ctrl._bubble_panel = None
         ctrl._earnings_label = None
         ctrl._time_label = None
         ctrl._img_view = None
@@ -563,7 +216,8 @@ class OverlayController(NSObject):
     def _setup(self):
         self._create_panel()
         self._create_ui()
-        self._start_timers()
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            1.0, self, "updateDisplay:", None, True)
 
     @objc.python_method
     def _create_panel(self):
@@ -623,7 +277,6 @@ class OverlayController(NSObject):
         image = None
         if path:
             image = AppKit.NSImage.alloc().initWithContentsOfFile_(path)
-        # 이미지가 없으면 소스 폴더의 기본 캐릭터로 폴백
         if not image:
             fallback = str(Path(__file__).parent / "캐릭터예시.jpg")
             image = AppKit.NSImage.alloc().initWithContentsOfFile_(fallback)
@@ -643,26 +296,12 @@ class OverlayController(NSObject):
         label.setTextColor_(color)
         return label
 
-    @objc.python_method
-    def _start_timers(self):
-        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            1.0, self, "updateDisplay:", None, True)
-        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            0.5, self, "checkMessages:", None, True)
-
     def updateDisplay_(self, timer):
         self._earnings_label.setStringValue_(
             f"💰 {self._tracker.format_earnings()}")
         self._time_label.setStringValue_(
             f"⏱ {self._tracker.format_time()}")
     updateDisplay_ = objc.selector(updateDisplay_, signature=b"v@:@")
-
-    def checkMessages_(self, timer):
-        try:
-            self._show_bubble(self._msg_queue.get_nowait())
-        except queue.Empty:
-            pass
-    checkMessages_ = objc.selector(checkMessages_, signature=b"v@:@")
 
     def showSettings_(self, sender):
         self._settings.show()
@@ -673,88 +312,20 @@ class OverlayController(NSObject):
         AppKit.NSApplication.sharedApplication().terminate_(None)
     quitApp_ = objc.selector(quitApp_, signature=b"v@:@")
 
-    @objc.python_method
-    def _show_bubble(self, text):
-        if self._bubble_panel:
-            self._bubble_panel.orderOut_(None)
-        frame = self._panel.frame()
-        bw, bh = 220, 80
-        bubble = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-            NSMakeRect(frame.origin.x - 15,
-                       frame.origin.y + frame.size.height + 8, bw, bh),
-            AppKit.NSWindowStyleMaskBorderless | AppKit.NSWindowStyleMaskNonactivatingPanel,
-            AppKit.NSBackingStoreBuffered, False,
-        )
-        bubble.setLevel_(MAX_LEVEL)
-        bubble.setCollectionBehavior_(
-            AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces |
-            AppKit.NSWindowCollectionBehaviorStationary)
-        bubble.setOpaque_(False)
-        bubble.setHasShadow_(True)
-
-        bg_path = self._config.get("bubble_bg_path", "")
-        bg_img = AppKit.NSImage.alloc().initWithContentsOfFile_(bg_path) if bg_path else None
-
-        if bg_img:
-            bubble.setBackgroundColor_(AppKit.NSColor.clearColor())
-            bg_view = AppKit.NSImageView.alloc().initWithFrame_(
-                NSMakeRect(0, 0, bw, bh))
-            bg_view.setImage_(bg_img)
-            bg_view.setImageScaling_(AppKit.NSImageScaleAxesIndependently)
-            bg_view.setWantsLayer_(True)
-            bg_view.layer().setCornerRadius_(12.0)
-            bg_view.layer().setMasksToBounds_(True)
-            bubble.contentView().addSubview_(bg_view)
-            text_color = AppKit.NSColor.whiteColor()
-        else:
-            bubble.setBackgroundColor_(AppKit.NSColor.windowBackgroundColor())
-            text_color = AppKit.NSColor.labelColor()
-
-        label = AppKit.NSTextField.alloc().initWithFrame_(
-            NSMakeRect(10, 8, bw - 20, bh - 16))
-        label.setBezeled_(False)
-        label.setDrawsBackground_(False)
-        label.setEditable_(False)
-        label.setSelectable_(False)
-        label.setAlignment_(AppKit.NSTextAlignmentCenter)
-        label.setFont_(AppKit.NSFont.boldSystemFontOfSize_(12))
-        label.setTextColor_(text_color)
-        label.setMaximumNumberOfLines_(0)
-        label.cell().setWraps_(True)
-        label.setStringValue_(text)
-
-        bubble.contentView().addSubview_(label)
-        bubble.orderFrontRegardless()
-        self._bubble_panel = bubble
-        secs = float(self._config.get("bubble_seconds", 8))
-        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            secs, self, "hideBubble:", None, False)
-
-    def hideBubble_(self, timer):
-        if self._bubble_panel:
-            self._bubble_panel.orderOut_(None)
-            self._bubble_panel = None
-    hideBubble_ = objc.selector(hideBubble_, signature=b"v@:@")
-
 
 # ── 실행 ─────────────────────────────────────────────────────────────────────
 
 def main():
     config = cfg.load()
     tracker = TimeTracker(hourly_rate=config["hourly_rate"])
-    msg_queue = queue.Queue()
 
     app = AppKit.NSApplication.sharedApplication()
     app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
 
-    watcher = BrowserWatcher(msg_queue, watch_sites=config.get("watch_sites", []))
-    watcher.start()
-
-    controller = OverlayController.create(tracker, msg_queue, config, watcher)
+    controller = OverlayController.create(tracker, config)
 
     def on_exit(sig, frame):
         tracker.save_session()
-        watcher.stop()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, on_exit)
