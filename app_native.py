@@ -365,15 +365,16 @@ class SettingsController(NSObject):
         self._table.setUsesAlternatingRowBackgroundColors_(True)
 
         scroll = AppKit.NSScrollView.alloc().initWithFrame_(
-            NSMakeRect(15, 60, w - 30, 265))
+            NSMakeRect(15, 96, w - 30, 196))
         scroll.setDocumentView_(self._table)
         scroll.setHasVerticalScroller_(True)
         scroll.setBorderType_(AppKit.NSBezelBorder)
         c.addSubview_(scroll)
 
-        # ── 추가 / 삭제 버튼 ──
+        # ── 1행: 추가 / 삭제 / 수정 ──
+        btn_y1 = 62
         add_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(15, 28, 80, 28))
+            NSMakeRect(15, btn_y1, 90, 28))
         add_btn.setTitle_("+ 추가")
         add_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         add_btn.setTarget_(self)
@@ -381,7 +382,7 @@ class SettingsController(NSObject):
         c.addSubview_(add_btn)
 
         del_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(105, 28, 70, 28))
+            NSMakeRect(113, btn_y1, 90, 28))
         del_btn.setTitle_("− 삭제")
         del_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         del_btn.setTarget_(self)
@@ -389,25 +390,25 @@ class SettingsController(NSObject):
         c.addSubview_(del_btn)
 
         edit_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(183, 28, 70, 28))
+            NSMakeRect(211, btn_y1, 90, 28))
         edit_btn.setTitle_("✏ 수정")
         edit_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         edit_btn.setTarget_(self)
         edit_btn.setAction_("editSite:")
         c.addSubview_(edit_btn)
 
-        # ── 말풍선 테스트 버튼 ──
+        # ── 2행: 말풍선 테스트 / 저장 ──
+        btn_y2 = 24
         test_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(261, 28, 90, 28))
+            NSMakeRect(15, btn_y2, 120, 28))
         test_btn.setTitle_("말풍선 테스트")
         test_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         test_btn.setTarget_(self)
         test_btn.setAction_("testBubble:")
         c.addSubview_(test_btn)
 
-        # ── 저장 버튼 ──
         save_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(w - 115, 28, 100, 28))
+            NSMakeRect(w - 115, btn_y2, 100, 28))
         save_btn.setTitle_("저장")
         save_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         save_btn.setKeyEquivalent_("\r")
