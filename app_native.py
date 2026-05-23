@@ -135,7 +135,8 @@ class AddSiteDialog(NSObject):
             AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskClosable,
             AppKit.NSBackingStoreBuffered, False,
         )
-        panel.setTitle_("사이트 추가")
+        self._title_label = "사이트 추가"
+        panel.setTitle_(self._title_label)
         panel.setLevel_(MAX_LEVEL)
         c = panel.contentView()
 
@@ -165,14 +166,14 @@ class AddSiteDialog(NSObject):
         cancel_btn.setAction_("cancel:")
         c.addSubview_(cancel_btn)
 
-        ok_btn = AppKit.NSButton.alloc().initWithFrame_(
+        self._ok_btn = AppKit.NSButton.alloc().initWithFrame_(
             NSMakeRect(185, 20, 90, 32))
-        ok_btn.setTitle_("추가")
-        ok_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
-        ok_btn.setKeyEquivalent_("\r")
-        ok_btn.setTarget_(self)
-        ok_btn.setAction_("confirm:")
-        c.addSubview_(ok_btn)
+        self._ok_btn.setTitle_("추가")
+        self._ok_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
+        self._ok_btn.setKeyEquivalent_("\r")
+        self._ok_btn.setTarget_(self)
+        self._ok_btn.setAction_("confirm:")
+        c.addSubview_(self._ok_btn)
 
         self._panel = panel
 
@@ -187,10 +188,21 @@ class AddSiteDialog(NSObject):
         parent.addSubview_(label)
 
     @objc.python_method
-    def show(self):
-        self._domain_field.setStringValue_("")
-        self._message_field.setStringValue_("")
-        self._delay_field.setStringValue_("20")
+    def show(self, site=None):
+        if site:
+            self._panel.setTitle_("사이트 수정")
+            self._ok_btn.setTitle_("수정")
+            self._domain_field.setStringValue_(site.get("domain", ""))
+            self._domain_field.setEditable_(False)
+            self._message_field.setStringValue_(site.get("message", ""))
+            self._delay_field.setStringValue_(str(site.get("delay_minutes", 20)))
+        else:
+            self._panel.setTitle_("사이트 추가")
+            self._ok_btn.setTitle_("추가")
+            self._domain_field.setStringValue_("")
+            self._domain_field.setEditable_(True)
+            self._message_field.setStringValue_("")
+            self._delay_field.setStringValue_("20")
         AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         self._panel.makeKeyAndOrderFront_(None)
 
@@ -369,16 +381,24 @@ class SettingsController(NSObject):
         c.addSubview_(add_btn)
 
         del_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(105, 28, 80, 28))
+            NSMakeRect(105, 28, 70, 28))
         del_btn.setTitle_("− 삭제")
         del_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         del_btn.setTarget_(self)
         del_btn.setAction_("removeSite:")
         c.addSubview_(del_btn)
 
+        edit_btn = AppKit.NSButton.alloc().initWithFrame_(
+            NSMakeRect(183, 28, 70, 28))
+        edit_btn.setTitle_("✏ 수정")
+        edit_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
+        edit_btn.setTarget_(self)
+        edit_btn.setAction_("editSite:")
+        c.addSubview_(edit_btn)
+
         # ── 말풍선 테스트 버튼 ──
         test_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(195, 28, 90, 28))
+            NSMakeRect(261, 28, 90, 28))
         test_btn.setTitle_("말풍선 테스트")
         test_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         test_btn.setTarget_(self)
@@ -468,6 +488,19 @@ class SettingsController(NSObject):
             self._panel, on_add)
         self._add_dialog.show()
     addSite_ = objc.selector(addSite_, signature=b"v@:@")
+
+    def editSite_(self, sender):
+        row = self._table.selectedRow()
+        if row < 0 or row >= len(self._data_source.sites):
+            return
+        original = self._data_source.sites[row]
+        def on_edit(site):
+            self._data_source.sites[row] = site
+            self._table.reloadData()
+        self._add_dialog = AddSiteDialog.alloc().initWithParent_callback_(
+            self._panel, on_edit)
+        self._add_dialog.show(site=original)
+    editSite_ = objc.selector(editSite_, signature=b"v@:@")
 
     def removeSite_(self, sender):
         row = self._table.selectedRow()
