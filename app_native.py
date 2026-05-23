@@ -531,7 +531,15 @@ class OverlayController(NSObject):
         feed.contentView().addSubview_(btn)
         feed.orderFrontRegardless()
         self._feed_panel = feed
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            30.0, self, "expireFeedButton:", None, False)
     showFeedButton_ = objc.selector(showFeedButton_, signature=b"v@:@")
+
+    def expireFeedButton_(self, timer):
+        if self._feed_panel:
+            self._feed_panel.orderOut_(None)
+            self._feed_panel = None
+    expireFeedButton_ = objc.selector(expireFeedButton_, signature=b"v@:@")
 
     def feedCharacter_(self, sender):
         self._level += 1
