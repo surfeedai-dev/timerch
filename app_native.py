@@ -228,11 +228,13 @@ class SettingsController(NSObject):
         self._overlay = overlay
         self._panel = None
         self._img_preview = None
+        self._bubble_bg_preview = None
         self._rate_field = None
         self._bubble_sec_field = None
         self._table = None
         self._data_source = None
         self._pending_char = None
+        self._pending_bubble_bg = None
         self._add_dialog = None
         return self
 
@@ -246,7 +248,7 @@ class SettingsController(NSObject):
 
     @objc.python_method
     def _build(self):
-        w, h = 420, 560
+        w, h = 420, 600
         screen = AppKit.NSScreen.mainScreen().frame()
         panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect((screen.size.width - w) / 2,
@@ -260,7 +262,7 @@ class SettingsController(NSObject):
 
         # ── 캐릭터 섹션 ──
         self._img_preview = AppKit.NSImageView.alloc().initWithFrame_(
-            NSMakeRect(w/2 - 60, 450, 120, 90))
+            NSMakeRect(w/2 - 60, 490, 120, 90))
         self._img_preview.setImageScaling_(
             AppKit.NSImageScaleProportionallyUpOrDown)
         self._img_preview.setWantsLayer_(True)
@@ -269,7 +271,7 @@ class SettingsController(NSObject):
         c.addSubview_(self._img_preview)
 
         char_btn = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(w/2 - 60, 415, 120, 28))
+            NSMakeRect(w/2 - 60, 458, 120, 28))
         char_btn.setTitle_("캐릭터 변경")
         char_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         char_btn.setTarget_(self)
@@ -277,16 +279,43 @@ class SettingsController(NSObject):
         c.addSubview_(char_btn)
 
         # ── 시급 ──
-        self._add_label(c, "시급 (원)", NSMakeRect(20, 378, 110, 22))
+        self._add_label(c, "시급 (원)", NSMakeRect(20, 421, 110, 22))
         self._rate_field = AppKit.NSTextField.alloc().initWithFrame_(
-            NSMakeRect(140, 375, 160, 26))
+            NSMakeRect(140, 418, 160, 26))
         c.addSubview_(self._rate_field)
 
-        # ── 말풍선 표시 시간 ──
-        self._add_label(c, "말풍선 시간 (초)", NSMakeRect(20, 344, 110, 22))
+        # ── 말풍선 시간 ──
+        self._add_label(c, "말풍선 시간 (초)", NSMakeRect(20, 384, 110, 22))
         self._bubble_sec_field = AppKit.NSTextField.alloc().initWithFrame_(
-            NSMakeRect(140, 341, 80, 26))
+            NSMakeRect(140, 381, 80, 26))
         c.addSubview_(self._bubble_sec_field)
+
+        # ── 말풍선 배경 이미지 ──
+        self._add_label(c, "말풍선 배경", NSMakeRect(20, 347, 110, 22))
+        self._bubble_bg_preview = AppKit.NSImageView.alloc().initWithFrame_(
+            NSMakeRect(140, 342, 48, 30))
+        self._bubble_bg_preview.setImageScaling_(
+            AppKit.NSImageScaleProportionallyUpOrDown)
+        self._bubble_bg_preview.setWantsLayer_(True)
+        self._bubble_bg_preview.layer().setCornerRadius_(4.0)
+        self._bubble_bg_preview.layer().setMasksToBounds_(True)
+        c.addSubview_(self._bubble_bg_preview)
+
+        bg_btn = AppKit.NSButton.alloc().initWithFrame_(
+            NSMakeRect(196, 342, 90, 28))
+        bg_btn.setTitle_("이미지 선택")
+        bg_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
+        bg_btn.setTarget_(self)
+        bg_btn.setAction_("changeBubbleBg:")
+        c.addSubview_(bg_btn)
+
+        bg_remove_btn = AppKit.NSButton.alloc().initWithFrame_(
+            NSMakeRect(292, 342, 50, 28))
+        bg_remove_btn.setTitle_("제거")
+        bg_remove_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
+        bg_remove_btn.setTarget_(self)
+        bg_remove_btn.setAction_("removeBubbleBg:")
+        c.addSubview_(bg_remove_btn)
 
         line1 = AppKit.NSBox.alloc().initWithFrame_(NSMakeRect(15, 322, w-30, 1))
         line1.setBoxType_(AppKit.NSBoxSeparator)
@@ -390,6 +419,10 @@ class SettingsController(NSObject):
             self._img_preview.setImage_(image)
         self._rate_field.setStringValue_(str(c.get("hourly_rate", 10320)))
         self._bubble_sec_field.setStringValue_(str(c.get("bubble_seconds", 8)))
+        bg_path = c.get("bubble_bg_path", "")
+        bg_img = AppKit.NSImage.alloc().initWithContentsOfFile_(bg_path) if bg_path else None
+        self._bubble_bg_preview.setImage_(bg_img)
+        self._pending_bubble_bg = None
         self._data_source.sites = copy.deepcopy(
             c.get("watch_sites", []))
         self._table.reloadData()
@@ -408,6 +441,24 @@ class SettingsController(NSObject):
                 self._pending_char)
             self._img_preview.setImage_(img)
     changeCharacter_ = objc.selector(changeCharacter_, signature=b"v@:@")
+
+    def changeBubbleBg_(self, sender):
+        p = AppKit.NSOpenPanel.openPanel()
+        p.setAllowedFileTypes_(["png", "jpg", "jpeg"])
+        p.setCanChooseFiles_(True)
+        p.setCanChooseDirectories_(False)
+        if p.runModal() == AppKit.NSModalResponseOK:
+            src = p.URLs()[0].path()
+            shutil.copy(src, str(cfg.BUBBLE_BG_FILE))
+            self._pending_bubble_bg = str(cfg.BUBBLE_BG_FILE)
+            img = AppKit.NSImage.alloc().initWithContentsOfFile_(self._pending_bubble_bg)
+            self._bubble_bg_preview.setImage_(img)
+    changeBubbleBg_ = objc.selector(changeBubbleBg_, signature=b"v@:@")
+
+    def removeBubbleBg_(self, sender):
+        self._pending_bubble_bg = ""
+        self._bubble_bg_preview.setImage_(None)
+    removeBubbleBg_ = objc.selector(removeBubbleBg_, signature=b"v@:@")
 
     def addSite_(self, sender):
         def on_add(site):
@@ -443,6 +494,8 @@ class SettingsController(NSObject):
         if self._pending_char:
             c["character_path"] = self._pending_char
             self._overlay._reload_character(self._pending_char)
+        if self._pending_bubble_bg is not None:
+            c["bubble_bg_path"] = self._pending_bubble_bg
         c["watch_sites"] = copy.deepcopy(self._data_source.sites)
         self._overlay._watcher.update_sites(c["watch_sites"])
         cfg.save(c)
@@ -603,8 +656,25 @@ class OverlayController(NSObject):
             AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces |
             AppKit.NSWindowCollectionBehaviorStationary)
         bubble.setOpaque_(False)
-        bubble.setBackgroundColor_(AppKit.NSColor.windowBackgroundColor())
         bubble.setHasShadow_(True)
+
+        bg_path = self._config.get("bubble_bg_path", "")
+        bg_img = AppKit.NSImage.alloc().initWithContentsOfFile_(bg_path) if bg_path else None
+
+        if bg_img:
+            bubble.setBackgroundColor_(AppKit.NSColor.clearColor())
+            bg_view = AppKit.NSImageView.alloc().initWithFrame_(
+                NSMakeRect(0, 0, bw, bh))
+            bg_view.setImage_(bg_img)
+            bg_view.setImageScaling_(AppKit.NSImageScaleAxesIndependently)
+            bg_view.setWantsLayer_(True)
+            bg_view.layer().setCornerRadius_(12.0)
+            bg_view.layer().setMasksToBounds_(True)
+            bubble.contentView().addSubview_(bg_view)
+            text_color = AppKit.NSColor.whiteColor()
+        else:
+            bubble.setBackgroundColor_(AppKit.NSColor.windowBackgroundColor())
+            text_color = AppKit.NSColor.labelColor()
 
         label = AppKit.NSTextField.alloc().initWithFrame_(
             NSMakeRect(10, 8, bw - 20, bh - 16))
@@ -613,8 +683,8 @@ class OverlayController(NSObject):
         label.setEditable_(False)
         label.setSelectable_(False)
         label.setAlignment_(AppKit.NSTextAlignmentCenter)
-        label.setFont_(AppKit.NSFont.systemFontOfSize_(12))
-        label.setTextColor_(AppKit.NSColor.labelColor())
+        label.setFont_(AppKit.NSFont.boldSystemFontOfSize_(12))
+        label.setTextColor_(text_color)
         label.setMaximumNumberOfLines_(0)
         label.cell().setWraps_(True)
         label.setStringValue_(text)

@@ -2,9 +2,10 @@ import json
 import shutil
 from pathlib import Path
 
-APP_SUPPORT = Path.home() / "Library" / "Application Support" / "타임캐릭터"
-CONFIG_FILE = APP_SUPPORT / "config.json"
-CHAR_FILE   = APP_SUPPORT / "character.png"
+APP_SUPPORT   = Path.home() / "Library" / "Application Support" / "타임캐릭터"
+CONFIG_FILE   = APP_SUPPORT / "config.json"
+CHAR_FILE     = APP_SUPPORT / "character.png"
+BUBBLE_BG_FILE = APP_SUPPORT / "bubble_bg.png"
 
 DEFAULT_SITES = [
     {"domain": "youtube.com",   "message": "유튜브 재밌어? 😄\n슬슬 일할 시간 아니야?", "delay_minutes": 20},
@@ -17,8 +18,9 @@ DEFAULT_SITES = [
 DEFAULTS = {
     "hourly_rate": 10320,
     "character_path": str(CHAR_FILE),
-    "watch_sites": DEFAULT_SITES,
+    "bubble_bg_path": "",
     "bubble_seconds": 8,
+    "watch_sites": DEFAULT_SITES,
 }
 
 
