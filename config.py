@@ -5,6 +5,7 @@ from pathlib import Path
 APP_SUPPORT = Path.home() / "Library" / "Application Support" / "타임캐릭터"
 CONFIG_FILE = APP_SUPPORT / "config.json"
 CHAR_FILE   = APP_SUPPORT / "character.png"
+LOG_FILE    = APP_SUPPORT / "log.json"
 
 DEFAULTS = {
     "hourly_rate": 10320,
@@ -27,6 +28,22 @@ def load():
             pass
     save(DEFAULTS.copy())
     return DEFAULTS.copy()
+
+
+def load_log() -> dict:
+    if LOG_FILE.exists():
+        try:
+            return json.loads(LOG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def save_log(log: dict):
+    APP_SUPPORT.mkdir(parents=True, exist_ok=True)
+    LOG_FILE.write_text(
+        json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def save(cfg: dict):

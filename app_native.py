@@ -4,7 +4,7 @@
 import sys
 import signal
 import shutil
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import objc
@@ -60,6 +60,10 @@ class DraggableView(AppKit.NSView):
             "캐릭터 자랑하기 📸", "shareCharacter:", "")
         share.setTarget_(self._ctrl)
         menu.addItem_(share)
+        log = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "오늘의 기록 📝", "showLog:", "")
+        log.setTarget_(self._ctrl)
+        menu.addItem_(log)
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
         q = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "종료", "quitApp:", "")
@@ -71,6 +75,105 @@ class DraggableView(AppKit.NSView):
     def acceptsFirstMouse_(self, event):
         return True
     acceptsFirstMouse_ = objc.selector(acceptsFirstMouse_, signature=b"B@:@")
+
+
+# ── 일지 창 ──────────────────────────────────────────────────────────────────
+
+class LogController(NSObject):
+
+    def initWithLevel_(self, overlay):
+        self = objc.super(LogController, self).init()
+        if self is None:
+            return None
+        self._overlay = overlay
+        self._panel = None
+        self._input = None
+        self._text_view = None
+        return self
+
+    @objc.python_method
+    def show(self):
+        if self._panel is None:
+            self._build()
+        self._reload()
+        AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        self._panel.makeKeyAndOrderFront_(None)
+
+    @objc.python_method
+    def _build(self):
+        w, h = 300, 420
+        screen = AppKit.NSScreen.mainScreen().frame()
+        panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect((screen.size.width - w) / 2,
+                       (screen.size.height - h) / 2, w, h),
+            AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskClosable,
+            AppKit.NSBackingStoreBuffered, False,
+        )
+        panel.setTitle_(f"오늘의 기록  {date.today()}")
+        panel.setLevel_(MAX_LEVEL)
+        c = panel.contentView()
+
+        # 입력창
+        self._input = AppKit.NSTextField.alloc().initWithFrame_(
+            NSMakeRect(12, h - 52, w - 100, 32))
+        self._input.setPlaceholderString_("오늘 뭐 했어?")
+        self._input.setBezelStyle_(AppKit.NSTextFieldRoundedBezel)
+        c.addSubview_(self._input)
+
+        add_btn = AppKit.NSButton.alloc().initWithFrame_(
+            NSMakeRect(w - 82, h - 52, 70, 32))
+        add_btn.setTitle_("기록")
+        add_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
+        add_btn.setKeyEquivalent_("\r")
+        add_btn.setTarget_(self)
+        add_btn.setAction_("addEntry:")
+        c.addSubview_(add_btn)
+
+        line = AppKit.NSBox.alloc().initWithFrame_(NSMakeRect(0, h - 62, w, 1))
+        line.setBoxType_(AppKit.NSBoxSeparator)
+        c.addSubview_(line)
+
+        # 기록 목록
+        self._text_view = AppKit.NSTextView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, w, h - 70))
+        self._text_view.setEditable_(False)
+        self._text_view.setSelectable_(True)
+        self._text_view.setFont_(AppKit.NSFont.systemFontOfSize_(13))
+        self._text_view.setTextContainerInset_(AppKit.NSMakeSize(8, 8))
+        self._text_view.setAutomaticLinkDetectionEnabled_(False)
+
+        scroll = AppKit.NSScrollView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, w, h - 70))
+        scroll.setDocumentView_(self._text_view)
+        scroll.setHasVerticalScroller_(True)
+        scroll.setBorderType_(AppKit.NSNoBorder)
+        c.addSubview_(scroll)
+
+        self._panel = panel
+
+    @objc.python_method
+    def _reload(self):
+        today = str(date.today())
+        log = cfg.load_log()
+        entries = log.get(today, [])
+        if entries:
+            text = "\n".join(f"[{e['time']}]  {e['text']}" for e in reversed(entries))
+        else:
+            text = "아직 기록이 없어요. 오늘 뭘 했는지 남겨봐요! 😊"
+        self._text_view.setString_(text)
+
+    def addEntry_(self, sender):
+        text = str(self._input.stringValue()).strip()
+        if not text:
+            return
+        today = str(date.today())
+        now = datetime.now().strftime("%H:%M")
+        log = cfg.load_log()
+        log.setdefault(today, []).append({"time": now, "text": text})
+        cfg.save_log(log)
+        self._input.setStringValue_("")
+        self._reload()
+    addEntry_ = objc.selector(addEntry_, signature=b"v@:@")
 
 
 # ── 설정 창 ──────────────────────────────────────────────────────────────────
@@ -215,6 +318,7 @@ class OverlayController(NSObject):
         ctrl._level_label = None
         ctrl._img_view = None
         ctrl._settings = SettingsController.alloc().initWithOverlay_(ctrl)
+        ctrl._log = LogController.alloc().initWithLevel_(ctrl)
         ctrl._setup()
         return ctrl
 
@@ -430,6 +534,10 @@ class OverlayController(NSObject):
         png.writeToFile_atomically_(save_path, True)
 
         AppKit.NSWorkspace.sharedWorkspace().openFile_(save_path)
+
+    def showLog_(self, sender):
+        self._log.show()
+    showLog_ = objc.selector(showLog_, signature=b"v@:@")
 
     def showSettings_(self, sender):
         self._settings.show()
