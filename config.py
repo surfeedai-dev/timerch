@@ -9,6 +9,7 @@ CHAR_FILE   = APP_SUPPORT / "character.png"
 DEFAULTS = {
     "hourly_rate": 10320,
     "character_path": str(CHAR_FILE),
+    "level": 0,
 }
 
 

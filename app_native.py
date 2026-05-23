@@ -4,10 +4,11 @@
 import sys
 import signal
 import shutil
+from datetime import date
 from pathlib import Path
 
 import objc
-from Foundation import NSObject, NSTimer, NSMakeRect, NSMakePoint
+from Foundation import NSObject, NSTimer, NSMakeRect, NSMakePoint, NSMakeSize
 import AppKit
 from Quartz import CGWindowLevelForKey, kCGMaximumWindowLevelKey
 
@@ -15,6 +16,7 @@ import config as cfg
 from tracker import TimeTracker
 
 MAX_LEVEL = CGWindowLevelForKey(kCGMaximumWindowLevelKey)
+FEED_INTERVAL = 300  # 5분
 
 
 # ── 드래그 가능한 커스텀 뷰 ──────────────────────────────────────────────────
@@ -54,6 +56,10 @@ class DraggableView(AppKit.NSView):
             "설정", "showSettings:", "")
         s.setTarget_(self._ctrl)
         menu.addItem_(s)
+        share = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "캐릭터 자랑하기 📸", "shareCharacter:", "")
+        share.setTarget_(self._ctrl)
+        menu.addItem_(share)
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
         q = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "종료", "quitApp:", "")
@@ -104,7 +110,6 @@ class SettingsController(NSObject):
         panel.setLevel_(MAX_LEVEL)
         c = panel.contentView()
 
-        # 캐릭터 미리보기
         self._img_preview = AppKit.NSImageView.alloc().initWithFrame_(
             NSMakeRect(w/2 - 55, 170, 110, 90))
         self._img_preview.setImageScaling_(
@@ -126,7 +131,6 @@ class SettingsController(NSObject):
         line.setBoxType_(AppKit.NSBoxSeparator)
         c.addSubview_(line)
 
-        # 시급
         rate_label = AppKit.NSTextField.alloc().initWithFrame_(
             NSMakeRect(20, 84, 100, 22))
         rate_label.setStringValue_("시급 (원)")
@@ -140,7 +144,6 @@ class SettingsController(NSObject):
             NSMakeRect(130, 81, 150, 26))
         c.addSubview_(self._rate_field)
 
-        # 저장 버튼
         save_btn = AppKit.NSButton.alloc().initWithFrame_(
             NSMakeRect(w - 115, 20, 100, 32))
         save_btn.setTitle_("저장")
@@ -204,9 +207,12 @@ class OverlayController(NSObject):
         ctrl = cls.alloc().init()
         ctrl._tracker = tracker
         ctrl._config = config
+        ctrl._level = config.get("level", 0)
         ctrl._panel = None
+        ctrl._feed_panel = None
         ctrl._earnings_label = None
         ctrl._time_label = None
+        ctrl._level_label = None
         ctrl._img_view = None
         ctrl._settings = SettingsController.alloc().initWithOverlay_(ctrl)
         ctrl._setup()
@@ -218,11 +224,13 @@ class OverlayController(NSObject):
         self._create_ui()
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             1.0, self, "updateDisplay:", None, True)
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            FEED_INTERVAL, self, "showFeedButton:", None, True)
 
     @objc.python_method
     def _create_panel(self):
         screen = AppKit.NSScreen.mainScreen().frame()
-        w, h = 185, 265
+        w, h = 185, 290
         panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(screen.size.width - w - 20, 80, w, h),
             AppKit.NSWindowStyleMaskBorderless | AppKit.NSWindowStyleMaskNonactivatingPanel,
@@ -250,7 +258,7 @@ class OverlayController(NSObject):
         w = self._panel.frame().size.width
 
         self._img_view = AppKit.NSImageView.alloc().initWithFrame_(
-            NSMakeRect(12, 100, w - 24, w - 24))
+            NSMakeRect(12, 110, w - 24, w - 24))
         self._img_view.setImageScaling_(
             AppKit.NSImageScaleProportionallyUpOrDown)
         self._img_view.setEditable_(False)
@@ -261,16 +269,22 @@ class OverlayController(NSObject):
         content.addSubview_(self._img_view)
 
         self._earnings_label = self._make_label(
-            NSMakeRect(5, 58, w - 10, 34), 13, True,
+            NSMakeRect(5, 70, w - 10, 34), 13, True,
             AppKit.NSColor.systemYellowColor())
         self._earnings_label.setStringValue_("💰 0원")
         content.addSubview_(self._earnings_label)
 
         self._time_label = self._make_label(
-            NSMakeRect(5, 25, w - 10, 26), 11, False,
+            NSMakeRect(5, 44, w - 10, 24), 11, False,
             AppKit.NSColor.secondaryLabelColor())
         self._time_label.setStringValue_("⏱ 00:00:00")
         content.addSubview_(self._time_label)
+
+        self._level_label = self._make_label(
+            NSMakeRect(5, 14, w - 10, 24), 12, True,
+            AppKit.NSColor.systemGreenColor())
+        self._level_label.setStringValue_(f"⭐ Lv.{self._level}")
+        content.addSubview_(self._level_label)
 
     @objc.python_method
     def _reload_character(self, path: str):
@@ -302,6 +316,120 @@ class OverlayController(NSObject):
         self._time_label.setStringValue_(
             f"⏱ {self._tracker.format_time()}")
     updateDisplay_ = objc.selector(updateDisplay_, signature=b"v@:@")
+
+    def showFeedButton_(self, timer):
+        if self._feed_panel is not None:
+            return
+        frame = self._panel.frame()
+        bw, bh = 140, 44
+        feed = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(frame.origin.x + (frame.size.width - bw) / 2,
+                       frame.origin.y - bh - 8, bw, bh),
+            AppKit.NSWindowStyleMaskBorderless | AppKit.NSWindowStyleMaskNonactivatingPanel,
+            AppKit.NSBackingStoreBuffered, False,
+        )
+        feed.setLevel_(MAX_LEVEL)
+        feed.setCollectionBehavior_(
+            AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces |
+            AppKit.NSWindowCollectionBehaviorStationary)
+        feed.setOpaque_(False)
+        feed.setBackgroundColor_(AppKit.NSColor.windowBackgroundColor())
+        feed.setHasShadow_(True)
+
+        btn = AppKit.NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, bw, bh))
+        btn.setTitle_("🍚 밥주기!")
+        btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
+        btn.setFont_(AppKit.NSFont.boldSystemFontOfSize_(14))
+        btn.setTarget_(self)
+        btn.setAction_("feedCharacter:")
+        feed.contentView().addSubview_(btn)
+        feed.orderFrontRegardless()
+        self._feed_panel = feed
+    showFeedButton_ = objc.selector(showFeedButton_, signature=b"v@:@")
+
+    def feedCharacter_(self, sender):
+        self._level += 1
+        self._level_label.setStringValue_(f"⭐ Lv.{self._level}")
+        c = self._config.copy()
+        c["level"] = self._level
+        cfg.save(c)
+        self._config = c
+        if self._feed_panel:
+            self._feed_panel.orderOut_(None)
+            self._feed_panel = None
+    feedCharacter_ = objc.selector(feedCharacter_, signature=b"v@:@")
+
+    def shareCharacter_(self, sender):
+        self._save_share_card()
+    shareCharacter_ = objc.selector(shareCharacter_, signature=b"v@:@")
+
+    @objc.python_method
+    def _save_share_card(self):
+        cw, ch = 400, 520
+        image = AppKit.NSImage.alloc().initWithSize_(NSMakeSize(cw, ch))
+        image.lockFocus()
+
+        # 배경
+        AppKit.NSColor.colorWithRed_green_blue_alpha_(0.08, 0.08, 0.12, 1.0).setFill()
+        AppKit.NSRectFill(NSMakeRect(0, 0, cw, ch))
+
+        # 캐릭터 이미지
+        char_path = self._config.get("character_path", "")
+        char_img = AppKit.NSImage.alloc().initWithContentsOfFile_(char_path) if char_path else None
+        if not char_img:
+            char_img = AppKit.NSImage.alloc().initWithContentsOfFile_(
+                str(Path(__file__).parent / "캐릭터예시.jpg"))
+        if char_img:
+            char_img.drawInRect_(NSMakeRect(cw/2 - 100, 240, 200, 200))
+
+        def draw_text(text, x, y, size, bold=False, color=None):
+            font = (AppKit.NSFont.boldSystemFontOfSize_(size) if bold
+                    else AppKit.NSFont.systemFontOfSize_(size))
+            attrs = {
+                AppKit.NSFontAttributeName: font,
+                AppKit.NSForegroundColorAttributeName: (
+                    color or AppKit.NSColor.whiteColor()),
+            }
+            ns = AppKit.NSString.stringWithString_(text)
+            ns.drawAtPoint_withAttributes_(NSMakePoint(x, y), attrs)
+
+        # 타이틀
+        draw_text("타임캐릭터", cw/2 - 65, 470, 22, bold=True)
+
+        # 구분선
+        AppKit.NSColor.colorWithRed_green_blue_alpha_(1, 1, 1, 0.15).setFill()
+        AppKit.NSRectFill(NSMakeRect(40, 458, cw - 80, 1))
+
+        # 레벨
+        draw_text(f"⭐  Lv.{self._level}", cw/2 - 50, 200, 26, bold=True,
+                  color=AppKit.NSColor.colorWithRed_green_blue_alpha_(1.0, 0.85, 0.2, 1.0))
+
+        # 활성 시간
+        draw_text("활성 시간", 40, 160, 12,
+                  color=AppKit.NSColor.colorWithRed_green_blue_alpha_(0.6, 0.6, 0.6, 1.0))
+        draw_text(self._tracker.format_time(), cw/2 - 55, 138, 20, bold=True)
+
+        # 오늘 수익
+        draw_text("오늘 번 돈", 40, 108, 12,
+                  color=AppKit.NSColor.colorWithRed_green_blue_alpha_(0.6, 0.6, 0.6, 1.0))
+        draw_text(self._tracker.format_earnings(), cw/2 - 55, 86, 20, bold=True,
+                  color=AppKit.NSColor.colorWithRed_green_blue_alpha_(1.0, 0.85, 0.2, 1.0))
+
+        # 날짜
+        draw_text(str(date.today()), cw/2 - 40, 40, 12,
+                  color=AppKit.NSColor.colorWithRed_green_blue_alpha_(0.5, 0.5, 0.5, 1.0))
+
+        image.unlockFocus()
+
+        # PNG로 저장
+        tiff = image.TIFFRepresentation()
+        rep = AppKit.NSBitmapImageRep.imageRepWithData_(tiff)
+        png = rep.representationUsingType_properties_(
+            AppKit.NSBitmapImageFileTypePNG, {})
+        save_path = str(Path.home() / "Desktop" / f"타임캐릭터_{date.today()}.png")
+        png.writeToFile_atomically_(save_path, True)
+
+        AppKit.NSWorkspace.sharedWorkspace().openFile_(save_path)
 
     def showSettings_(self, sender):
         self._settings.show()
