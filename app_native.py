@@ -41,10 +41,15 @@ class DraggableView(AppKit.NSView):
             return
         loc = event.locationInWindow()
         frame = self.window().frame()
-        self.window().setFrameOrigin_(NSMakePoint(
-            frame.origin.x + loc.x - self._drag_start.x,
-            frame.origin.y + loc.y - self._drag_start.y,
-        ))
+        new_x = frame.origin.x + loc.x - self._drag_start.x
+        new_y = frame.origin.y + loc.y - self._drag_start.y
+        self.window().setFrameOrigin_(NSMakePoint(new_x, new_y))
+        bubble = self._ctrl._bubble_panel
+        if bubble:
+            bubble.setFrameOrigin_(NSMakePoint(
+                new_x - 15,
+                new_y + frame.size.height + 8,
+            ))
     mouseDragged_ = objc.selector(mouseDragged_, signature=b"v@:@")
 
     def mouseUp_(self, event):
@@ -224,6 +229,7 @@ class SettingsController(NSObject):
         self._panel = None
         self._img_preview = None
         self._rate_field = None
+        self._bubble_sec_field = None
         self._table = None
         self._data_source = None
         self._pending_char = None
@@ -276,13 +282,19 @@ class SettingsController(NSObject):
             NSMakeRect(140, 375, 160, 26))
         c.addSubview_(self._rate_field)
 
-        line1 = AppKit.NSBox.alloc().initWithFrame_(NSMakeRect(15, 358, w-30, 1))
+        # ── 말풍선 표시 시간 ──
+        self._add_label(c, "말풍선 시간 (초)", NSMakeRect(20, 344, 110, 22))
+        self._bubble_sec_field = AppKit.NSTextField.alloc().initWithFrame_(
+            NSMakeRect(140, 341, 80, 26))
+        c.addSubview_(self._bubble_sec_field)
+
+        line1 = AppKit.NSBox.alloc().initWithFrame_(NSMakeRect(15, 322, w-30, 1))
         line1.setBoxType_(AppKit.NSBoxSeparator)
         c.addSubview_(line1)
 
         # ── 사이트 섹션 레이블 ──
         section = AppKit.NSTextField.alloc().initWithFrame_(
-            NSMakeRect(15, 332, 200, 20))
+            NSMakeRect(15, 298, 200, 20))
         section.setStringValue_("모니터링 사이트")
         section.setBezeled_(False)
         section.setDrawsBackground_(False)
@@ -377,6 +389,7 @@ class SettingsController(NSObject):
         if image:
             self._img_preview.setImage_(image)
         self._rate_field.setStringValue_(str(c.get("hourly_rate", 10320)))
+        self._bubble_sec_field.setStringValue_(str(c.get("bubble_seconds", 8)))
         self._data_source.sites = copy.deepcopy(
             c.get("watch_sites", []))
         self._table.reloadData()
@@ -421,6 +434,10 @@ class SettingsController(NSObject):
         try:
             c["hourly_rate"] = int(str(self._rate_field.stringValue()))
             self._overlay._tracker.hourly_rate = c["hourly_rate"]
+        except ValueError:
+            pass
+        try:
+            c["bubble_seconds"] = max(1, int(str(self._bubble_sec_field.stringValue())))
         except ValueError:
             pass
         if self._pending_char:
@@ -605,8 +622,9 @@ class OverlayController(NSObject):
         bubble.contentView().addSubview_(label)
         bubble.orderFrontRegardless()
         self._bubble_panel = bubble
+        secs = float(self._config.get("bubble_seconds", 8))
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            8.0, self, "hideBubble:", None, False)
+            secs, self, "hideBubble:", None, False)
 
     def hideBubble_(self, timer):
         if self._bubble_panel:

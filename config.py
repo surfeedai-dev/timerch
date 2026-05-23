@@ -18,6 +18,7 @@ DEFAULTS = {
     "hourly_rate": 10320,
     "character_path": str(CHAR_FILE),
     "watch_sites": DEFAULT_SITES,
+    "bubble_seconds": 8,
 }
 
 
