@@ -335,6 +335,15 @@ class SettingsController(NSObject):
         del_btn.setAction_("removeSite:")
         c.addSubview_(del_btn)
 
+        # ── 말풍선 테스트 버튼 ──
+        test_btn = AppKit.NSButton.alloc().initWithFrame_(
+            NSMakeRect(195, 28, 90, 28))
+        test_btn.setTitle_("말풍선 테스트")
+        test_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
+        test_btn.setTarget_(self)
+        test_btn.setAction_("testBubble:")
+        c.addSubview_(test_btn)
+
         # ── 저장 버튼 ──
         save_btn = AppKit.NSButton.alloc().initWithFrame_(
             NSMakeRect(w - 115, 28, 100, 28))
@@ -402,6 +411,10 @@ class SettingsController(NSObject):
             del self._data_source.sites[row]
             self._table.reloadData()
     removeSite_ = objc.selector(removeSite_, signature=b"v@:@")
+
+    def testBubble_(self, sender):
+        self._overlay._show_bubble("👋 말풍선 테스트!\n잘 보이나요? 😄")
+    testBubble_ = objc.selector(testBubble_, signature=b"v@:@")
 
     def saveSettings_(self, sender):
         c = self._overlay._config.copy()
@@ -561,7 +574,7 @@ class OverlayController(NSObject):
         if self._bubble_panel:
             self._bubble_panel.orderOut_(None)
         frame = self._panel.frame()
-        bw, bh = 210, 75
+        bw, bh = 220, 80
         bubble = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(frame.origin.x - 15,
                        frame.origin.y + frame.size.height + 8, bw, bh),
@@ -575,9 +588,20 @@ class OverlayController(NSObject):
         bubble.setOpaque_(False)
         bubble.setBackgroundColor_(AppKit.NSColor.windowBackgroundColor())
         bubble.setHasShadow_(True)
-        label = self._make_label(NSMakeRect(0, 0, bw, bh), 12, False,
-                                 AppKit.NSColor.labelColor())
+
+        label = AppKit.NSTextField.alloc().initWithFrame_(
+            NSMakeRect(10, 8, bw - 20, bh - 16))
+        label.setBezeled_(False)
+        label.setDrawsBackground_(False)
+        label.setEditable_(False)
+        label.setSelectable_(False)
+        label.setAlignment_(AppKit.NSTextAlignmentCenter)
+        label.setFont_(AppKit.NSFont.systemFontOfSize_(12))
+        label.setTextColor_(AppKit.NSColor.labelColor())
+        label.setMaximumNumberOfLines_(0)
+        label.cell().setWraps_(True)
         label.setStringValue_(text)
+
         bubble.contentView().addSubview_(label)
         bubble.orderFrontRegardless()
         self._bubble_panel = bubble
